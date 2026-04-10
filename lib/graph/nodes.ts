@@ -108,14 +108,21 @@ export async function promptGenNode(
   const rawContent = String(response.content);
 
   // Parse the JSON response to extract the persona (if one was generated).
-  // Using Zod safeParse instead of Python's try/except json.JSONDecodeError
-  // (which just returned None on failure — we do the same but with types).
+  // IMPORTANT: JSON.parse must be inside try-catch — the LLM sometimes returns
+  // plain text or malformed JSON even when instructed otherwise. If JSON.parse
+  // throws before safeParse runs, the node crashes and the graph fails silently.
   let currentPersona: string | null = null;
-  const parseResult = PromptGenOutputSchema.safeParse(
-    JSON.parse(extractJSON(rawContent))
-  );
-  if (parseResult.success) {
-    currentPersona = parseResult.data["current-persona"];
+  try {
+    const parseResult = PromptGenOutputSchema.safeParse(
+      JSON.parse(extractJSON(rawContent))
+    );
+    if (parseResult.success) {
+      currentPersona = parseResult.data["current-persona"];
+    }
+  } catch {
+    // Non-JSON response (e.g. the model asked a question in plain text).
+    // currentPersona stays null — the graph will still append the message and
+    // the user will see the plain-text response via the `next` field extraction.
   }
 
   // Return the partial state update.
@@ -153,21 +160,32 @@ export async function evaluatorNode(
 ): Promise<Partial<GraphState>> {
   const model = getLLMClient(state.provider, false, 0.0);
 
-  // The evaluator gets the full conversation history + eval log as context.
+  // The evaluator gets the full conversation history + eval log as context,
+  // then the latest PromptGen output as the final "user" turn (the thing to score).
+  //
   // This matches the Python implementation (lines 197–200):
   //   conversation_history = [system] + conversation + eval_log + [user_turn]
   //
-  // The "user_turn" here is the most recent PromptGen response — we pass it
-  // so the evaluator has the freshest persona to score.
-  const latestPersonaMessage =
-    state.conversation[state.conversation.length - 1];
+  // IMPORTANT: The last message in state.conversation is the AIMessage from
+  // promptGenNode (the JSON blob). We pass it AGAIN as the final HumanMessage
+  // so the evaluator treats it as "here is the thing you need to evaluate right now".
+  // The duplication is intentional — the conversation gives broader context,
+  // the final HumanMessage is the explicit scoring prompt.
+  //
+  // We only grab the content of the last message (the promptGen JSON), not the
+  // full message object, because we're changing the role from AI → Human.
+  const lastConvMessage = state.conversation[state.conversation.length - 1];
+  const latestOutputContent = lastConvMessage
+    ? String(lastConvMessage.content)
+    : "";
 
   const messages = [
     new SystemMessage(EVALUATOR_SYSTEM_PROMPT),
     ...state.conversation,
     ...state.evalLog,
-    // If there's no new message (shouldn't happen, but defensive), skip
-    ...(latestPersonaMessage ? [new HumanMessage(String(latestPersonaMessage.content))] : []),
+    // Final "user" turn: ask the evaluator to score the latest persona output.
+    // Skip if conversation is empty (shouldn't happen in normal flow).
+    ...(latestOutputContent ? [new HumanMessage(latestOutputContent)] : []),
   ];
 
   const response = await model.invoke(messages);
@@ -193,11 +211,11 @@ export async function evaluatorNode(
   }
 
   return {
-    // Append the evaluation pair: the input we evaluated (user role) and the
-    // score/feedback response (assistant role). This mirrors the Python app's
-    // eval_log structure (lines 228–230).
+    // Append the evaluation pair to evalLog so future evaluations have context.
+    // Structure: [HumanMessage(what we evaluated), AIMessage(the score/feedback)]
+    // This mirrors the Python app's eval_log structure (lines 228–230).
     evalLog: [
-      new HumanMessage(String(latestPersonaMessage?.content ?? "")),
+      new HumanMessage(latestOutputContent),
       new AIMessage(rawContent),
     ],
     latestScore,

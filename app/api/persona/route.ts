@@ -126,6 +126,11 @@ export async function POST(req: NextRequest) {
         return new AIMessage(m.content);
       case "system":
         return new SystemMessage(m.content);
+      default:
+        // Defensive fallback — Zod schema restricts to the three cases above,
+        // but TypeScript's switch exhaustiveness check doesn't apply at runtime.
+        // Treat any unexpected role as a user message rather than produce undefined.
+        return new HumanMessage(m.content);
     }
   });
 
@@ -139,10 +144,19 @@ export async function POST(req: NextRequest) {
   );
 
   // ─── 3. Build the initial graph state ────────────────────────────────────
+  // slice(0, -1) removes the last element (the current user message, which
+  // lives in userInput) so the graph doesn't see it twice.
+  // WHY SEPARATE conversation vs testConversation by phase?
+  // The test useChat() instance only sends the TEST conversation in messages[].
+  // The generate useChat() instance only sends the GENERATE conversation.
+  // They hit the same endpoint but with different phase values — we route the
+  // messages array into the correct state field based on phase.
+  const historyWithoutLatestUserMsg = conversation.slice(0, -1);
+
   const initialState = {
-    conversation: conversation.slice(0, -1), // exclude the latest user message (it's in userInput)
+    conversation: phase === "generate" ? historyWithoutLatestUserMsg : [],
     evalLog: evalLogMessages,
-    testConversation: phase === "test" ? conversation.slice(0, -1) : [],
+    testConversation: phase === "test" ? historyWithoutLatestUserMsg : [],
     currentPersona,
     latestScore: null as number | null,
     latestFeedback: null as string | null,

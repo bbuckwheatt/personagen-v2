@@ -1,43 +1,40 @@
 /**
- * components/panels/chat-panel.tsx — Left panel: PromptGen conversation
+ * components/panels/chat-panel.tsx — Full-width chat interface
  *
- * This is the main chat interface where the user describes their chatbot
- * requirements and the PromptGen agent asks clarifying questions.
+ * The main conversation panel where the user describes their chatbot and the
+ * PromptGen agent asks clarifying questions. In the new chat-first layout this
+ * fills the entire page — no Card wrapper, no fixed column constraints.
  *
  * WHAT IT RENDERS:
- * - Scrollable message history (user and assistant turns)
- * - For assistant messages: renders only the `next` field from the JSON
- *   response (the question/response the user should see), NOT the raw JSON.
- *   This mirrors the Python app's extract_next(extract_response(msg['content']))
- *   call on line 217.
- * - Text area input + send button
- * - AgentStepIndicator (shown while the graph is running)
+ * - Scrollable message history (user right-aligned, assistant left-aligned)
+ * - For assistant messages: renders only the `next` field from the JSON response,
+ *   NOT the raw JSON. Mirrors Python's extract_next(extract_response(msg)) (lines 43–69).
+ * - StepLog — a scrollable timeline of agent steps shown while (and after) the
+ *   graph runs. Replaces the single-line AgentStepIndicator.
+ * - Textarea input + send button
  *
- * WHY NOT STREAM THE RAW JSON IN THE CHAT?
- * The PromptGen agent returns a JSON blob with multiple fields. The user
- * only cares about the `next` field (the question/response). Showing raw JSON
- * would be confusing. We parse it client-side and display only the `next` field.
+ * WHY NOT STREAM RAW JSON?
+ * The PromptGen agent returns a JSON blob. The user only cares about the `next`
+ * field (the question/response the agent wants to say). Showing raw JSON would
+ * be confusing and ugly. We parse it client-side after each token update and
+ * display only the human-readable part.
  *
  * PARSING STRATEGY:
- * The assistant messages arrive as streaming tokens that build up a JSON string.
- * We can't parse JSON until the stream is complete. So:
- * - While streaming: show the raw accumulating text (or hide it and show a spinner)
- * - After stream completes: parse and display only the `next` field
- *
- * We use a simple heuristic: if the message content starts with "{" or "```",
- * try to parse it as JSON. If it fails (partial stream), show nothing or a
- * placeholder. Once the stream completes, the full JSON is parseable.
+ * Tokens accumulate into a partial JSON string as the stream flows. We can't
+ * parse JSON until the stream is complete, so:
+ * - While streaming: show a typing indicator (three bouncing dots)
+ * - After stream: extract and display the `next` field
  */
 
 "use client";
 
 import { useRef, useEffect } from "react";
 import type { Message } from "ai";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { AgentStepIndicator } from "@/components/agent-step-indicator";
+import { StepLog } from "@/components/step-log";
+import type { StepEntry } from "@/components/step-log";
 
 interface ChatPanelProps {
   messages: Message[];
@@ -45,14 +42,14 @@ interface ChatPanelProps {
   onInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
   isLoading: boolean;
-  currentStep: string | null;
+  steps: StepEntry[];
 }
 
 /**
  * Extracts the display text from a PromptGen JSON response.
- * Falls back to the raw content if parsing fails (e.g. mid-stream).
+ * Falls back gracefully to hide raw JSON fragments mid-stream.
  *
- * Mirrors Python's: extract_next(extract_response(msg['content']))
+ * Mirrors Python: extract_next(extract_response(msg['content']))
  * (openaipersona.py lines 43–69)
  */
 function extractDisplayText(content: string): string {
@@ -61,21 +58,19 @@ function extractDisplayText(content: string): string {
 
   try {
     const parsed = JSON.parse(stripped);
-    // The `next` field is what the user should read
     if (typeof parsed?.next === "string" && parsed.next) {
       return parsed.next;
     }
   } catch {
-    // Not valid JSON yet (mid-stream) or not JSON at all
+    // Partial stream — JSON not complete yet
   }
 
-  // If we can't parse it, don't show raw JSON fragments to the user
-  // Return empty string — the loading indicator shows instead
+  // Hide raw JSON fragments — the typing indicator will show instead
   if (content.trim().startsWith("{") || content.trim().startsWith("```")) {
     return "";
   }
 
-  // Non-JSON response (shouldn't happen with this LLM setup, but handle gracefully)
+  // Non-JSON response (e.g. plain-text error or fallback)
   return content;
 }
 
@@ -85,74 +80,76 @@ export function ChatPanel({
   onInputChange,
   onSubmit,
   isLoading,
-  currentStep,
+  steps,
 }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to the latest message
+  // Auto-scroll to the latest message or step update
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, steps]);
 
   return (
-    <Card className="flex flex-col h-full">
-      <CardHeader className="pb-2 shrink-0">
-        <CardTitle className="text-base">PromptGen Chat</CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Describe your chatbot — the agent will ask questions and generate a persona.
-        </p>
-      </CardHeader>
+    <div className="flex flex-col h-full">
+      {/* ── Message history ─────────────────────────────────────────────── */}
+      <ScrollArea className="flex-1 px-4 pt-4">
+        <div className="flex flex-col gap-3 pb-2 max-w-2xl mx-auto">
+          {messages.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              Describe your chatbot — the agent will ask clarifying questions and build a persona.
+            </p>
+          )}
 
-      <CardContent className="flex flex-col gap-3 flex-1 min-h-0 p-4 pt-0">
-        {/* Message history */}
-        <ScrollArea className="flex-1 pr-2">
-          <div className="flex flex-col gap-3 pb-2">
-            {messages.map((msg) => {
-              if (msg.role === "user") {
-                return (
-                  <div key={msg.id} className="flex justify-end">
-                    <div className="bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-3 py-2 text-sm max-w-[85%]">
-                      {msg.content}
-                    </div>
-                  </div>
-                );
-              }
-
-              // Assistant message — extract and display only the `next` field
-              const displayText = extractDisplayText(msg.content);
-
+          {messages.map((msg) => {
+            if (msg.role === "user") {
               return (
-                <div key={msg.id} className="flex justify-start">
-                  <div className="bg-muted rounded-2xl rounded-tl-sm px-3 py-2 text-sm max-w-[85%]">
-                    {displayText || (
-                      // Streaming in progress — show a pulse placeholder
-                      <span className="inline-flex gap-1 items-center text-muted-foreground">
-                        <span className="animate-bounce delay-0 h-1 w-1 bg-current rounded-full" />
-                        <span className="animate-bounce delay-150 h-1 w-1 bg-current rounded-full" />
-                        <span className="animate-bounce delay-300 h-1 w-1 bg-current rounded-full" />
-                      </span>
-                    )}
+                <div key={msg.id} className="flex justify-end">
+                  <div className="bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-3 py-2 text-sm max-w-[85%]">
+                    {msg.content}
                   </div>
                 </div>
               );
-            })}
+            }
 
-            {/* Live step indicator — shown while any graph node is running */}
-            <AgentStepIndicator label={isLoading ? currentStep : null} />
+            // Assistant message — extract only the `next` field
+            const displayText = extractDisplayText(msg.content);
 
-            {/* Anchor for auto-scroll */}
-            <div ref={bottomRef} />
-          </div>
-        </ScrollArea>
+            return (
+              <div key={msg.id} className="flex justify-start">
+                <div className="bg-muted rounded-2xl rounded-tl-sm px-3 py-2 text-sm max-w-[85%]">
+                  {displayText || (
+                    // JSON building up mid-stream — show typing indicator
+                    <span className="inline-flex gap-1 items-center text-muted-foreground">
+                      <span className="animate-bounce delay-0 h-1 w-1 bg-current rounded-full" />
+                      <span className="animate-bounce delay-150 h-1 w-1 bg-current rounded-full" />
+                      <span className="animate-bounce delay-300 h-1 w-1 bg-current rounded-full" />
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
 
-        {/* Input form */}
-        <form onSubmit={onSubmit} className="flex flex-col gap-2 shrink-0">
+          {/* ── Step log — visible while running and after completion ───── */}
+          {steps.length > 0 && (
+            <div className="mt-1">
+              <StepLog steps={steps} />
+            </div>
+          )}
+
+          {/* Anchor for auto-scroll */}
+          <div ref={bottomRef} />
+        </div>
+      </ScrollArea>
+
+      {/* ── Input form ──────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-t border-border px-4 py-3">
+        <form onSubmit={onSubmit} className="flex flex-col gap-2 max-w-2xl mx-auto">
           <Textarea
             value={input}
             onChange={onInputChange}
             placeholder="Describe your chatbot requirements..."
             className="resize-none text-sm min-h-[80px]"
-            // Submit on Cmd/Ctrl+Enter for power users
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                 e.preventDefault();
@@ -170,7 +167,7 @@ export function ChatPanel({
             {isLoading ? "Running..." : "Send"}
           </Button>
         </form>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
