@@ -147,26 +147,24 @@ export function PersonaGenApp() {
   });
 
   // ─── Test flow useChat ────────────────────────────────────────────────────
-  // WHY NO BODY HERE? See the module-level comment above about the stale
-  // closure bug. Body values are passed explicitly in handleTestSubmit instead.
+  // Uses a dedicated /api/test route that streams directly from LangChain
+  // without going through LangGraph's streamEvents. The test flow is just
+  // "chat with a system prompt" — no orchestration needed.
   const testChat = useChat({
-    api: "/api/persona",
+    api: "/api/test",
     onError: (error) => {
       console.error("[testChat] Error:", error);
     },
   });
 
-  // Submission wrapper that injects current body values at submit time.
-  // This is the fix: evaluated when the user clicks Send, not at hook init.
+  // Pass currentPersona and provider at submit time so we always use the
+  // latest values (avoids the stale-closure problem with useChat body config).
   const handleTestSubmit = useCallback(
     (e: React.FormEvent<HTMLFormElement>) => {
       testChat.handleSubmit(e, {
         body: {
-          phase: "test",
           currentPersona: activePersona,
-          refinementCount: 0,
           provider,
-          evalLog: [],
         },
       });
     },
