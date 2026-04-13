@@ -6,23 +6,28 @@
  * - Stream annotation processing (agentStep, evaluation, persona events)
  * - Step log state (live timeline of agent activity)
  * - Drawer state (preview + test panels)
+ * - Completion card state (shown after persona is ready)
  * - Reset logic
  *
- * LAYOUT: Chat-first
- * The chat panel fills the full page. Preview and Test are drawers — hidden
- * by default, opened by buttons in the top bar. Only one drawer open at a time.
+ * ── TEST PANEL BUG FIX ───────────────────────────────────────────────────────
+ * The root cause of "test response never comes": the `body` option passed to
+ * useChat() is evaluated at hook initialization time. At that moment,
+ * `activePersona` is null. Even after generation completes and `activePersona`
+ * is set, the stale null flows into the POST body when the user submits the
+ * test form. The API route gets `currentPersona: null`, which causes testNode
+ * to hit the static-message early-return branch (no LLM invocation → no token
+ * stream → empty assistant message with no visible text).
  *
- * WHY CHAT-FIRST?
- * The original 3-column layout showed the persona preview and test panel even
- * when no persona existed yet. This cluttered the screen and made each panel
- * feel cramped. A full-width chat lets the conversation breathe; the preview
- * and test are discoverable via clearly-labeled buttons.
+ * Fix: Don't rely on the `body` option in useChat() config for test. Instead,
+ * pass the current values explicitly via handleSubmit's second argument, which
+ * is evaluated at submission time (not initialization time). This guarantees
+ * the latest `activePersona` is always sent.
  */
 
 "use client";
 
 import { useChat } from "ai/react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Provider } from "@/lib/providers";
 import type { AgentStepAnnotation } from "@/lib/schemas";
 import type { StepEntry } from "@/components/step-log";
@@ -36,6 +41,29 @@ import { Drawer } from "@/components/drawer";
 type DrawerView = "preview" | "test" | null;
 type ChatData = AgentStepAnnotation[];
 
+/**
+ * Extracts the `plan` array from the last assistant message in the generate
+ * conversation. These are the remaining questions the PromptGen agent planned
+ * to ask — we surface them as quick-send chips in the completion card so the
+ * user can refine without having to type.
+ */
+function extractPlanFromMessages(
+  messages: Array<{ role: string; content: string }>
+): string[] {
+  const lastAsst = [...messages].reverse().find((m) => m.role === "assistant");
+  if (!lastAsst) return [];
+  try {
+    const stripped = lastAsst.content
+      .replace(/^```(?:\w+)?\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim();
+    const parsed = JSON.parse(stripped);
+    return Array.isArray(parsed?.plan) ? parsed.plan.slice(0, 3) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function PersonaGenApp() {
   // ─── Core state ───────────────────────────────────────────────────────────
   const [provider, setProvider] = useState<Provider>("openai");
@@ -43,20 +71,32 @@ export function PersonaGenApp() {
   const [latestScore, setLatestScore] = useState<number | null>(null);
   const [latestFeedback, setLatestFeedback] = useState<string | null>(null);
 
-  // evalLog: serialized message pairs from the evaluator, sent back on each request
-  // so the evaluator maintains context across user turns.
-  const [evalLog, setEvalLog] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  // evalLog: serialized message pairs from the evaluator, sent back on each
+  // request so the evaluator maintains context across user turns.
+  const [evalLog, setEvalLog] = useState<
+    Array<{ role: "user" | "assistant"; content: string }>
+  >([]);
 
   // refinementCount: how many refinement iterations have happened this session.
-  // Sent to the API route so it knows where the graph left off across requests.
   const [refinementCount, setRefinementCount] = useState(0);
 
+  // ─── Completion state ─────────────────────────────────────────────────────
+  // Set to true after the generate stream ends and we have an active persona.
+  // Controls visibility of the completion card in the chat panel.
+  const [personaComplete, setPersonaComplete] = useState(false);
+
+  // ─── activePersona ref — for use inside stale closures ───────────────────
+  // onFinish is defined once at hook creation and closes over the initial value
+  // of `activePersona` (which is null). We keep a ref in sync with the state
+  // so the onFinish callback can always read the latest value.
+  const activePersonaRef = useRef<string | null>(null);
+  useEffect(() => {
+    activePersonaRef.current = activePersona;
+  }, [activePersona]);
+
   // ─── Step log state ───────────────────────────────────────────────────────
-  // An ordered list of agent steps shown as a timeline while the graph runs.
-  // Each step is added when its "agentStep" annotation arrives, updated when
-  // the next step starts or an "evaluation" annotation arrives.
   const [steps, setSteps] = useState<StepEntry[]>([]);
-  const stepCounterRef = useRef(0); // used to generate unique step IDs
+  const stepCounterRef = useRef(0);
 
   // ─── Drawer state ─────────────────────────────────────────────────────────
   const [openDrawer, setOpenDrawer] = useState<DrawerView>(null);
@@ -80,37 +120,81 @@ export function PersonaGenApp() {
     },
     onError: (error) => {
       console.error("[generateChat] Error:", error);
-      // Mark the last running step as errored
       setSteps((prev) =>
         prev.map((s) =>
-          s.status === "running" ? { ...s, status: "error" as const, endedAt: Date.now() } : s
+          s.status === "running"
+            ? { ...s, status: "error" as const, endedAt: Date.now() }
+            : s
         )
       );
     },
     onFinish: () => {
-      // Mark any still-running step as done when the stream ends
+      // Mark any still-running step as done
       setSteps((prev) =>
         prev.map((s) =>
-          s.status === "running" ? { ...s, status: "done" as const, endedAt: Date.now() } : s
+          s.status === "running"
+            ? { ...s, status: "done" as const, endedAt: Date.now() }
+            : s
         )
       );
+      // Show the completion card if we now have an active persona.
+      // Use the ref (not the state) because this callback closes over the
+      // initial null value of activePersona.
+      if (activePersonaRef.current) {
+        setPersonaComplete(true);
+      }
     },
   });
 
   // ─── Test flow useChat ────────────────────────────────────────────────────
+  // WHY NO BODY HERE? See the module-level comment above about the stale
+  // closure bug. Body values are passed explicitly in handleTestSubmit instead.
   const testChat = useChat({
     api: "/api/persona",
-    body: {
-      phase: "test",
-      currentPersona: activePersona,
-      refinementCount: 0,
-      provider,
-      evalLog: [],
-    },
     onError: (error) => {
       console.error("[testChat] Error:", error);
     },
   });
+
+  // Submission wrapper that injects current body values at submit time.
+  // This is the fix: evaluated when the user clicks Send, not at hook init.
+  const handleTestSubmit = useCallback(
+    (e: React.FormEvent<HTMLFormElement>) => {
+      testChat.handleSubmit(e, {
+        body: {
+          phase: "test",
+          currentPersona: activePersona,
+          refinementCount: 0,
+          provider,
+          evalLog: [],
+        },
+      });
+    },
+    [testChat, activePersona, provider]
+  );
+
+  // ─── Quick-send handler (example prompts + completion card chips) ─────────
+  // Called when the user clicks an example prompt or a plan-item chip.
+  // Uses generateChat.append so the message is sent immediately without
+  // requiring the user to type in the textarea.
+  const handleSendMessage = useCallback(
+    (text: string) => {
+      setPersonaComplete(false); // hide completion card while generating
+      generateChat.append(
+        { role: "user", content: text },
+        {
+          body: {
+            phase: "generate",
+            currentPersona: activePersona,
+            refinementCount,
+            provider,
+            evalLog,
+          },
+        }
+      );
+    },
+    [generateChat, activePersona, refinementCount, provider, evalLog]
+  );
 
   // ─── Process stream annotations ───────────────────────────────────────────
   useEffect(() => {
@@ -123,36 +207,43 @@ export function PersonaGenApp() {
     for (const annotation of newAnnotations) {
       switch (annotation.type) {
         case "agentStep": {
-          // Mark the previous running step as done
           setSteps((prev) => {
             const updated = prev.map((s) =>
               s.status === "running"
                 ? { ...s, status: "done" as const, endedAt: Date.now() }
                 : s
             );
-            // Add the new running step
             const id = `step-${stepCounterRef.current++}`;
-            return [...updated, {
-              id,
-              label: annotation.label,
-              status: "running" as const,
-              startedAt: Date.now(),
-            }];
+            return [
+              ...updated,
+              {
+                id,
+                label: annotation.label,
+                status: "running" as const,
+                startedAt: Date.now(),
+              },
+            ];
           });
           break;
         }
 
         case "evaluation": {
-          // Update the current evaluator step with the score as detail
           const scoreText = `score: ${Math.round(annotation.score * 100)}%`;
-          const detail = annotation.score >= 0.9
-            ? `${scoreText} ✓ accepted`
-            : `${scoreText} — refining`;
+          const detail =
+            annotation.score >= 0.9
+              ? `${scoreText} ✓ accepted`
+              : `${scoreText} — refining`;
 
           setSteps((prev) =>
             prev.map((s) =>
-              s.status === "running" && s.label.toLowerCase().includes("evaluat")
-                ? { ...s, status: "done" as const, endedAt: Date.now(), detail }
+              s.status === "running" &&
+              s.label.toLowerCase().includes("evaluat")
+                ? {
+                    ...s,
+                    status: "done" as const,
+                    endedAt: Date.now(),
+                    detail,
+                  }
                 : s
             )
           );
@@ -160,7 +251,6 @@ export function PersonaGenApp() {
           setLatestScore(annotation.score);
           setLatestFeedback(annotation.feedback);
 
-          // Sync refinementCount so the next request knows where we are
           if (annotation.score < 0.9) {
             setRefinementCount(annotation.refinementCount + 1);
           }
@@ -177,6 +267,17 @@ export function PersonaGenApp() {
     processedAnnotationsRef.current = data.length;
   }, [generateChat.data]);
 
+  // ─── Completion card plan items ───────────────────────────────────────────
+  // Extracted from the last assistant message's JSON `plan` field.
+  // Memoized so we only re-parse when messages change.
+  const completionPlanItems = useMemo(
+    () =>
+      personaComplete
+        ? extractPlanFromMessages(generateChat.messages)
+        : [],
+    [personaComplete, generateChat.messages]
+  );
+
   // ─── Reset ────────────────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
     generateChat.setMessages([]);
@@ -187,6 +288,7 @@ export function PersonaGenApp() {
     setEvalLog([]);
     setRefinementCount(0);
     setSteps([]);
+    setPersonaComplete(false);
     stepCounterRef.current = 0;
     processedAnnotationsRef.current = 0;
     setOpenDrawer(null);
@@ -196,15 +298,21 @@ export function PersonaGenApp() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen bg-background">
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
-      <header className="flex items-center justify-between gap-4 px-4 py-2 border-b border-border shrink-0">
-        <div>
-          <h1 className="text-sm font-semibold leading-tight">PersonaGen</h1>
-          <p className="text-[11px] text-muted-foreground">
-            {/* FIX: template literal was missing backticks in original — was rendering as plain text */}
-            {`LangGraph · ${provider === "openai" ? "OpenAI gpt-4.1" : "Claude claude-sonnet-4-6"}`}
-          </p>
+      <header className="flex items-center justify-between gap-4 px-5 py-3 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shrink-0 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-white">
+              <path d="M7 1L9 5H13L10 8L11 12L7 10L3 12L4 8L1 5H5L7 1Z" fill="currentColor" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="text-sm font-bold leading-tight tracking-tight">PersonaGen</h1>
+            <p className="text-[10px] text-muted-foreground leading-tight">
+              {`LangGraph · ${provider === "openai" ? "OpenAI gpt-4.1" : "Claude claude-sonnet-4-6"}`}
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -214,23 +322,22 @@ export function PersonaGenApp() {
             disabled={isAnyLoading}
           />
 
-          {/* Preview button — disabled until a persona exists */}
+          {/* Preview button */}
           <button
             onClick={openPreview}
             disabled={!activePersona}
             className={`
-              flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors
+              flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border font-medium transition-all
               ${activePersona
-                ? "border-border hover:bg-muted text-foreground cursor-pointer"
-                : "border-border/50 text-muted-foreground/50 cursor-not-allowed"
+                ? "border-border hover:bg-muted text-foreground cursor-pointer hover:border-foreground/30"
+                : "border-border/40 text-muted-foreground/40 cursor-not-allowed"
               }
             `}
           >
             <span>Preview</span>
-            {/* Score badge inline with button when persona exists */}
             {latestScore !== null && activePersona && (
               <span className={`
-                text-[10px] font-mono px-1 py-0.5 rounded
+                text-[10px] font-mono px-1.5 py-0.5 rounded-md font-semibold
                 ${latestScore >= 0.9
                   ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
                   : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
@@ -239,30 +346,30 @@ export function PersonaGenApp() {
                 {Math.round(latestScore * 100)}%
               </span>
             )}
-            <span className="text-muted-foreground">›</span>
+            <span className="text-muted-foreground/60">›</span>
           </button>
 
-          {/* Test button — disabled until a persona exists */}
+          {/* Test button */}
           <button
             onClick={openTest}
             disabled={!activePersona}
             className={`
-              flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors
+              flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border font-medium transition-all
               ${activePersona
-                ? "border-border hover:bg-muted text-foreground cursor-pointer"
-                : "border-border/50 text-muted-foreground/50 cursor-not-allowed"
+                ? "border-border hover:bg-muted text-foreground cursor-pointer hover:border-foreground/30"
+                : "border-border/40 text-muted-foreground/40 cursor-not-allowed"
               }
             `}
           >
             <span>Test</span>
-            <span className="text-muted-foreground">›</span>
+            <span className="text-muted-foreground/60">›</span>
           </button>
 
           <ResetButton onReset={handleReset} disabled={isAnyLoading} />
         </div>
       </header>
 
-      {/* ── Main chat area — full width ───────────────────────────────────── */}
+      {/* ── Main chat area ────────────────────────────────────────────────── */}
       <main className="flex-1 min-h-0">
         <ChatPanel
           messages={generateChat.messages}
@@ -271,6 +378,16 @@ export function PersonaGenApp() {
           onSubmit={generateChat.handleSubmit}
           isLoading={generateChat.isLoading}
           steps={steps}
+          onSendMessage={handleSendMessage}
+          completionCard={
+            personaComplete
+              ? {
+                  score: latestScore,
+                  planItems: completionPlanItems,
+                  onOpenTest: openTest,
+                }
+              : undefined
+          }
         />
       </main>
 
@@ -298,7 +415,7 @@ export function PersonaGenApp() {
           messages={testChat.messages}
           input={testChat.input}
           onInputChange={testChat.handleInputChange}
-          onSubmit={testChat.handleSubmit}
+          onSubmit={handleTestSubmit}
           isLoading={testChat.isLoading}
           hasPersona={!!activePersona}
         />

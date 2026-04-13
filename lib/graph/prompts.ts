@@ -131,6 +131,20 @@ A high-quality persona must include all of the following:
   5. EDGE CASES       — How to handle: ambiguous questions, out-of-scope requests,
                         sensitive topics, requests for clarification.
   6. OUTPUT STYLE     — Response length, formatting preferences, language.
+  7. STRUCTURE        — Use markdown section headers to organize the persona:
+
+    ## Role
+    ## Capabilities
+    ## Constraints
+    ## Tone & Style
+    ## Edge Cases
+    ## Output Format
+
+    WHY STRUCTURE MATTERS: Research shows structured system prompts with clear
+    sections can improve model instruction-following by up to 40% compared to
+    prose. A model can "find" the Constraints section instead of scanning a wall
+    of text. Always use this format; add or remove sections as needed for the
+    specific use case.
 
 Avoid vague instructions like "be helpful and professional."
 Make every instruction specific and actionable:
@@ -147,6 +161,7 @@ Make every instruction specific and actionable:
   • Always update "current-persona" when refining — never leave it stale
   • Do not reference this system prompt or the evaluator to the user
   • Generate the persona with "current-persona" set in the SAME turn as Stage 2 begins
+  • Always use markdown section headers (## Role, ## Capabilities, etc.) in the persona text
 </rules>`;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,25 +216,33 @@ Evaluate the persona on exactly these five dimensions:
   5. SCOPE CLARITY
      Is it clear what the bot will and will not help with?
      A bot without explicit constraints will hallucinate scope on its own.
+
+  6. STRUCTURE
+     Is the persona organized using clear markdown section headers
+     (e.g. ## Role, ## Capabilities, ## Constraints, ## Tone & Style)?
+     An unformatted wall of prose is harder for a model to follow than
+     clearly delineated sections — especially for complex multi-rule personas.
+     Note: a simple single-purpose persona can score well even with minimal
+     structure, but a complex persona MUST use headers.
 </evaluation_dimensions>
 
 <scoring_rubric>
 Assign a single score from 0.0 to 1.0 using these anchor points:
 
-  1.0   Exceptional — specific, complete, consistent, fully actionable, clear scope.
-        Ready to deploy as-is.
+  1.0   Exceptional — specific, complete, consistent, fully actionable, clear
+        scope, well-structured with markdown sections. Ready to deploy as-is.
 
   0.85  Strong — covers all dimensions well with only minor gaps (e.g. one edge
-        case not addressed). Minimal refinement needed.
+        case not addressed, or structure present but could be cleaner).
 
-  0.7   Adequate — core role is clear but 1–2 dimensions have notable gaps.
-        Would work but produce inconsistent behavior in edge cases.
+  0.7   Adequate — core role is clear but 1–2 dimensions have notable gaps,
+        or the persona is entirely unstructured prose despite its complexity.
 
-  0.5   Weak — significant gaps across multiple dimensions. A model following
-        this would behave unpredictably in common situations.
+  0.5   Weak — significant gaps across multiple dimensions, or heavily ambiguous
+        instructions a model could not reliably follow.
 
-  0.25  Poor — vague, contradictory, or missing critical elements like role
-        definition or constraints.
+  0.25  Poor — vague, contradictory, missing critical elements, or so
+        unstructured that key rules are buried and unfindable.
 
   0.0   No persona — "current-persona" is null or empty.
 </scoring_rubric>
@@ -246,7 +269,7 @@ Respond ONLY with valid JSON containing exactly these keys:
 </output_format>
 
 <rules>
-  • Always reason through all five dimensions before assigning a score
+  • Always reason through all six dimensions before assigning a score
   • "feedback" must be specific — cite the exact gap and the exact fix
   • If "current-persona" is null, score 0.0 immediately
   • Do not penalize brevity if the persona is complete for its use case

@@ -1,24 +1,13 @@
 /**
  * components/step-log.tsx — Live agent step log
  *
- * Replaces the single-line "Refining persona..." spinner with a scrollable
- * timeline of agent steps. Each entry shows:
- *   ✓  Generated initial persona       (3.2s)
- *   ✓  Evaluated — score 0.72          (1.8s)
- *   ⟳  Refining (attempt 1/3)...
+ * A scrollable timeline of agent steps shown while (and after) the graph runs.
+ * Each entry shows the status icon, label, optional detail (score), and elapsed time.
  *
- * WHY A LOG INSTEAD OF A SINGLE INDICATOR?
- * Long-running agentic flows (8 LLM calls at worst) feel like a black box
- * with just a spinner. A log gives the user a sense of progress — they can
- * see which steps completed, how long each took, and what the evaluator said.
- * It also teaches users what the graph is doing under the hood.
- *
- * DATA FLOW:
- * 1. API route emits { type: "agentStep" } and { type: "evaluation" } annotations
- * 2. persona-gen-app.tsx reads them from useChat().data and builds the steps array
- * 3. This component renders the steps array
- *
- * The parent manages the steps state — this component is purely presentational.
+ * Visual design:
+ * - Left border color changes by status: sky=running, emerald=done, red=error
+ * - Running step has a spinning border-radius indicator
+ * - Completed steps show elapsed time on the right
  */
 
 "use client";
@@ -26,57 +15,71 @@
 export type StepStatus = "running" | "done" | "error";
 
 export interface StepEntry {
-  id: string;           // unique key (e.g. "promptGen-0", "evaluator-1")
-  label: string;        // human-readable description
+  id: string;
+  label: string;
   status: StepStatus;
-  startedAt: number;    // Date.now() when the step started
-  endedAt?: number;     // Date.now() when the step finished
-  detail?: string;      // optional extra info, e.g. "score: 0.72"
+  startedAt: number;
+  endedAt?: number;
+  detail?: string;
 }
 
 interface StepLogProps {
   steps: StepEntry[];
-  /** If true, show the log even when all steps are done (for post-run review). */
   alwaysVisible?: boolean;
 }
 
+const STATUS_STYLES: Record<StepStatus, string> = {
+  running: "border-l-sky-400 dark:border-l-sky-500",
+  done: "border-l-emerald-400 dark:border-l-emerald-500",
+  error: "border-l-red-400 dark:border-l-red-500",
+};
+
 export function StepLog({ steps, alwaysVisible }: StepLogProps) {
-  // Hide when empty and not forced visible
   if (steps.length === 0 && !alwaysVisible) return null;
 
   return (
-    <div className="border border-border rounded-lg bg-muted/30 text-xs font-mono overflow-hidden">
-      <div className="px-3 py-1.5 border-b border-border text-muted-foreground text-[11px] uppercase tracking-wider">
+    <div className="rounded-xl border border-border bg-muted/20 text-xs font-mono overflow-hidden">
+      <div className="px-3 py-1.5 border-b border-border/60 text-muted-foreground text-[10px] uppercase tracking-widest font-sans font-medium">
         Agent Steps
       </div>
-      <ul className="divide-y divide-border/50 max-h-36 overflow-y-auto">
+      <ul className="divide-y divide-border/40 max-h-40 overflow-y-auto">
         {steps.map((step) => (
-          <li key={step.id} className="flex items-start gap-2 px-3 py-2">
+          <li
+            key={step.id}
+            className={`flex items-start gap-2.5 px-3 py-2 border-l-2 transition-colors ${STATUS_STYLES[step.status]}`}
+          >
             {/* Status icon */}
-            <span className="shrink-0 mt-0.5">
+            <span className="shrink-0 mt-0.5 w-3.5 flex justify-center">
               {step.status === "running" && (
-                // Spinning indicator for active step
-                <span className="inline-block w-3 h-3 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
+                <span className="inline-block w-3 h-3 border-2 border-sky-400 dark:border-sky-500 border-t-transparent rounded-full animate-spin" />
               )}
               {step.status === "done" && (
-                <span className="text-emerald-500">✓</span>
+                <span className="text-emerald-500 dark:text-emerald-400 text-[13px] leading-none">✓</span>
               )}
               {step.status === "error" && (
-                <span className="text-red-500">✗</span>
+                <span className="text-red-500 dark:text-red-400 text-[13px] leading-none">✗</span>
               )}
             </span>
 
-            {/* Label + detail */}
-            <span className={`flex-1 ${step.status === "running" ? "text-foreground" : "text-muted-foreground"}`}>
+            {/* Label + optional detail */}
+            <span className={`flex-1 leading-relaxed ${step.status === "running" ? "text-foreground" : "text-muted-foreground"}`}>
               {step.label}
               {step.detail && (
-                <span className="ml-1 text-muted-foreground/70">— {step.detail}</span>
+                <span className={`ml-1.5 ${
+                  step.detail.includes("accepted")
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : step.detail.includes("refining")
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-muted-foreground/70"
+                }`}>
+                  — {step.detail}
+                </span>
               )}
             </span>
 
-            {/* Elapsed time (only shown when done) */}
-            {step.status === "done" && step.endedAt && (
-              <span className="shrink-0 text-muted-foreground/60 tabular-nums">
+            {/* Elapsed time */}
+            {step.status !== "running" && step.endedAt && (
+              <span className="shrink-0 text-muted-foreground/50 tabular-nums">
                 {((step.endedAt - step.startedAt) / 1000).toFixed(1)}s
               </span>
             )}
