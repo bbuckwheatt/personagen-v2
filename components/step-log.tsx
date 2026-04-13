@@ -42,7 +42,7 @@ export function StepLog({ steps, alwaysVisible }: StepLogProps) {
       <div className="px-3 py-1.5 border-b border-border/60 text-muted-foreground text-[10px] uppercase tracking-widest font-sans font-medium">
         Agent Steps
       </div>
-      <ul className="divide-y divide-border/40 max-h-40 overflow-y-auto">
+      <ul className="divide-y divide-border/40">
         {steps.map((step) => (
           <li
             key={step.id}

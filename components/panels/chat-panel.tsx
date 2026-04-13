@@ -63,15 +63,53 @@ interface ChatPanelProps {
 }
 
 /**
+ * When both promptGenNode and refineNode stream tokens into the same useChat
+ * message (refinement loop), msg.content becomes two concatenated JSON blobs:
+ *   {"next":"...","plan":[...],...}{"next":"...","plan":[...],...}
+ * JSON.parse() fails on this. We walk backward through the string to find
+ * the LAST complete {...} block and parse only that.
+ */
+function extractLastJSON(text: string): object | null {
+  let end = text.lastIndexOf("}");
+  if (end === -1) return null;
+
+  while (end >= 0) {
+    // Find the matching opening brace by counting depth
+    let depth = 0;
+    let start = -1;
+    for (let i = end; i >= 0; i--) {
+      if (text[i] === "}") depth++;
+      else if (text[i] === "{") {
+        depth--;
+        if (depth === 0) {
+          start = i;
+          break;
+        }
+      }
+    }
+    if (start === -1) return null;
+
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      // This closing brace wasn't the end of a valid top-level object — try the next one
+      end = text.lastIndexOf("}", end - 1);
+    }
+  }
+  return null;
+}
+
+/**
  * Extracts the display text from a PromptGen JSON response.
  *
  * Priority:
  *  1. `next` field — the agent's user-facing response
  *  2. If `next` is empty but `current-persona` exists — a fallback "ready" message
- *  3. If content starts with `{` or ``` — return "" (typing indicator shows instead)
+ *  3. If content looks like JSON (starts with { or ```) — return "" (typing indicator)
  *  4. Otherwise return the raw content (plain-text response, shouldn't happen often)
  *
- * Mirrors Python: extract_next(extract_response(msg['content'])) (lines 43–69)
+ * Uses extractLastJSON to handle concatenated JSON blobs that occur when both
+ * promptGenNode and refineNode stream into the same useChat message.
  */
 function extractDisplayText(content: string): string {
   const stripped = content
@@ -79,36 +117,31 @@ function extractDisplayText(content: string): string {
     .replace(/\n?```$/, "")
     .trim();
 
-  try {
-    const parsed = JSON.parse(stripped);
+  const parsed = extractLastJSON(stripped);
+
+  if (parsed) {
+    const p = parsed as Record<string, unknown>;
 
     // Primary: the agent's explicit user-facing response
-    if (typeof parsed?.next === "string" && parsed.next.trim()) {
-      return parsed.next.trim();
+    if (typeof p.next === "string" && p.next.trim()) {
+      return p.next.trim();
     }
 
-    // next is empty/null — pick the best available fallback rather than
-    // leaving a three-dot indicator on a completed message.
-    if (parsed?.["current-persona"]) {
-      // A persona was generated or refined — acknowledge it
+    // next is empty/null — persona was generated without a message
+    if (p["current-persona"]) {
       return "Your persona has been generated. Open Preview to review it, or keep chatting to refine it.";
     }
 
-    if (typeof parsed?.reasoning === "string" && parsed.reasoning.trim()) {
-      // Agent is thinking through requirements but hasn't asked yet — show nothing
-      // and let the dots play until the stream finishes with a real next field
-      return "";
-    }
-  } catch {
-    // Partial stream — JSON not yet complete, show typing indicator
-  }
-
-  // Hide raw JSON fragments while they're accumulating during streaming
-  if (content.trim().startsWith("{") || content.trim().startsWith("```")) {
+    // Agent is mid-reasoning, stream not complete yet
     return "";
   }
 
-  // Plain text response (shouldn't normally happen with these prompts)
+  // Hide raw JSON fragments while they're accumulating during streaming
+  if (stripped.startsWith("{") || stripped.startsWith("```")) {
+    return "";
+  }
+
+  // Plain text (synthetic messages injected by the app — "What would you like to change?")
   return content;
 }
 
@@ -241,7 +274,9 @@ export function ChatPanel({
           )}
 
           {/* Message list */}
-          {messages.map((msg) => {
+          {messages.map((msg, idx) => {
+            const isLastMessage = idx === messages.length - 1;
+
             if (msg.role === "user") {
               return (
                 <div key={msg.id} className="flex justify-end">
@@ -253,6 +288,14 @@ export function ChatPanel({
             }
 
             const displayText = extractDisplayText(msg.content);
+            // Show dots only while the stream is actively running AND this is the
+            // last message. Completed messages with no displayText (e.g. a refine
+            // node that had no `next`) are silently hidden rather than staying as
+            // a permanent three-dot bubble.
+            const showDots = !displayText && isLoading && isLastMessage;
+
+            if (!displayText && !showDots) return null;
+
             return (
               <div key={msg.id} className="flex justify-start">
                 <div className="bg-muted rounded-2xl rounded-tl-sm px-3.5 py-2.5 text-sm max-w-[85%]">

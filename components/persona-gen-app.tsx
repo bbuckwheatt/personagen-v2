@@ -386,7 +386,20 @@ export function PersonaGenApp() {
                   score: latestScore,
                   planItems: completionPlanItems,
                   onOpenTest: openTest,
-                  onKeepRefining: () => setPersonaComplete(false),
+                  onKeepRefining: () => {
+                    setPersonaComplete(false);
+                    // Inject a synthetic assistant message so the conversation
+                    // continues naturally rather than leaving an empty input
+                    generateChat.setMessages([
+                      ...generateChat.messages,
+                      {
+                        id: `keep-refining-${Date.now()}`,
+                        role: "assistant" as const,
+                        content:
+                          "What would you like to change? You can point out anything that doesn't fit — tone, scope, constraints, format, or any other requirements you'd like to add.",
+                      },
+                    ]);
+                  },
                 }
               : undefined
           }
