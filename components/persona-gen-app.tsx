@@ -302,10 +302,8 @@ export function PersonaGenApp() {
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
       <header className="flex items-center justify-between gap-4 px-5 py-3 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-white">
-              <path d="M7 1L9 5H13L10 8L11 12L7 10L3 12L4 8L1 5H5L7 1Z" fill="currentColor" />
-            </svg>
+          <div className="w-7 h-7 rounded-md bg-amber-600 flex items-center justify-center shrink-0">
+            <span className="text-white text-[11px] font-bold tracking-tight leading-none">PG</span>
           </div>
           <div>
             <h1 className="text-sm font-bold leading-tight tracking-tight">PersonaGen</h1>

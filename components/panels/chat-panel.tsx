@@ -108,24 +108,21 @@ function CompletionCard({
 }: CompletionCardData & { onSendQuestion: (q: string) => void }) {
   return (
     <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-2xl rounded-tl-sm overflow-hidden border border-violet-200 dark:border-violet-800 shadow-sm">
-        {/* Header strip */}
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gradient-to-r from-violet-500 to-indigo-600">
+      <div className="max-w-[85%] rounded-xl rounded-tl-sm overflow-hidden border border-amber-200 dark:border-amber-800 shadow-sm">
+        {/* Header strip — flat amber, no gradient */}
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-amber-600">
           <div className="flex items-center gap-2">
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className="text-white/90">
-              <path d="M7 1L9 5H13L10 8L11 12L7 10L3 12L4 8L1 5H5L7 1Z" fill="currentColor" />
-            </svg>
             <span className="text-white text-xs font-semibold tracking-wide">Persona ready</span>
           </div>
           {score !== null && (
-            <span className="text-[11px] font-mono bg-white/20 text-white px-2 py-0.5 rounded-full font-semibold">
-              {Math.round(score * 100)}% score
+            <span className="text-[11px] font-mono bg-black/20 text-white px-2 py-0.5 rounded font-semibold">
+              {Math.round(score * 100)}%
             </span>
           )}
         </div>
 
         {/* Body */}
-        <div className="bg-violet-50/60 dark:bg-violet-950/20 px-4 py-3 flex flex-col gap-3">
+        <div className="bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 flex flex-col gap-3">
           <p className="text-sm text-foreground/80">
             Your chatbot persona has been generated and evaluated. What would you like to do next?
           </p>
@@ -133,10 +130,10 @@ function CompletionCard({
           {/* Primary CTA */}
           <button
             onClick={onOpenTest}
-            className="flex items-center justify-between w-full px-3 py-2 bg-white dark:bg-background border border-violet-200 dark:border-violet-700 rounded-lg text-sm font-medium text-foreground hover:bg-violet-50 dark:hover:bg-violet-950/40 transition-colors group"
+            className="flex items-center justify-between w-full px-3 py-2 bg-white dark:bg-background border border-amber-200 dark:border-amber-700 rounded-md text-sm font-medium text-foreground hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors group"
           >
             <span>Test your persona</span>
-            <span className="text-violet-500 group-hover:translate-x-0.5 transition-transform">↗</span>
+            <span className="text-amber-600 group-hover:translate-x-0.5 transition-transform">↗</span>
           </button>
 
           {/* Refinement chips */}
@@ -150,7 +147,7 @@ function CompletionCard({
                   <button
                     key={i}
                     onClick={() => onSendQuestion(item)}
-                    className="text-left text-xs px-3 py-1.5 rounded-lg bg-white dark:bg-background border border-violet-100 dark:border-violet-800/50 text-foreground/70 hover:text-foreground hover:border-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
+                    className="text-left text-xs px-3 py-1.5 rounded-md bg-white dark:bg-background border border-amber-100 dark:border-amber-800/50 text-foreground/70 hover:text-foreground hover:border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
                   >
                     {item}
                   </button>
@@ -191,10 +188,8 @@ export function ChatPanel({
           {/* Empty state — shown before first message */}
           {isEmpty && (
             <div className="flex flex-col items-center gap-6 py-16 text-center">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-md">
-                <svg width="22" height="22" viewBox="0 0 14 14" fill="none" className="text-white">
-                  <path d="M7 1L9 5H13L10 8L11 12L7 10L3 12L4 8L1 5H5L7 1Z" fill="currentColor" />
-                </svg>
+              <div className="w-12 h-12 rounded-xl bg-amber-600 flex items-center justify-center shadow-md">
+                <span className="text-white text-lg font-bold tracking-tight leading-none">PG</span>
               </div>
               <div>
                 <h2 className="text-base font-semibold text-foreground mb-1">
@@ -278,7 +273,7 @@ export function ChatPanel({
               value={input}
               onChange={onInputChange}
               placeholder="Describe your chatbot requirements..."
-              className="resize-none text-sm min-h-[80px] pr-4 rounded-xl border-border/60 focus:border-violet-300 dark:focus:border-violet-700 transition-colors"
+              className="resize-none text-sm min-h-[80px] pr-4 rounded-lg border-border/60 focus:border-amber-400 dark:focus:border-amber-600 transition-colors"
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                   e.preventDefault();
@@ -296,7 +291,7 @@ export function ChatPanel({
               type="submit"
               disabled={isLoading || !input.trim()}
               size="sm"
-              className="bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 text-white border-0 shadow-sm px-4"
+              className="bg-amber-600 hover:bg-amber-700 text-white border-0 shadow-sm px-4 transition-colors"
             >
               {isLoading ? "Running..." : "Send"}
             </Button>
