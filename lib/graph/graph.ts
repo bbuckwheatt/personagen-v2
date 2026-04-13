@@ -55,7 +55,7 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { GraphStateAnnotation } from "./state";
 import { promptGenNode, evaluatorNode, refineNode, testNode } from "./nodes";
-import { shouldRefine, routeByPhase } from "./edges";
+import { shouldRefine, routeByPhase, shouldEvaluate } from "./edges";
 
 const workflow = new StateGraph(GraphStateAnnotation)
   // ─── Register nodes ────────────────────────────────────────────────────────
@@ -73,9 +73,14 @@ const workflow = new StateGraph(GraphStateAnnotation)
     test: "test",
   })
 
-  // ─── Deterministic edges ───────────────────────────────────────────────────
-  // After generating a persona, always evaluate it
-  .addEdge("promptGen", "evaluator")
+  // ─── Conditional edge: promptGen → evaluator or END ───────────────────────
+  // If promptGenNode produced a persona, evaluate it.
+  // If it only asked a follow-up question (currentPersona is null), end the
+  // graph so the user can respond before generation proceeds.
+  .addConditionalEdges("promptGen", shouldEvaluate, {
+    evaluate: "evaluator",
+    __end__: END,
+  })
 
   // After testing, always end (test is a single turn)
   .addEdge("test", END)

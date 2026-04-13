@@ -114,4 +114,18 @@ export function routeByPhase(
   return state.phase === "test" ? "test" : "promptGen";
 }
 
+/**
+ * shouldEvaluate — decides whether to run the evaluator after promptGenNode
+ *
+ * Called after promptGenNode completes. If the model generated a persona
+ * (currentPersona is non-null), proceed to the evaluator. If it only asked
+ * a follow-up question (currentPersona is null), end the graph immediately
+ * so the user can answer before generation continues.
+ */
+export function shouldEvaluate(
+  state: GraphState
+): "evaluate" | "__end__" {
+  return state.currentPersona ? "evaluate" : "__end__";
+}
+
 export { MAX_REFINEMENTS };
