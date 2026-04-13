@@ -294,6 +294,35 @@ export function PersonaGenApp() {
     setOpenDrawer(null);
   }, [generateChat, testChat]);
 
+  // ─── Model switch with reset guard ───────────────────────────────────────
+  const handleProviderChange = useCallback(
+    (next: Provider) => {
+      if (next === provider) return;
+      const hasConversation = generateChat.messages.length > 0;
+      if (hasConversation) {
+        const ok = window.confirm(
+          "Switching models will reset the current conversation and any generated persona. Continue?"
+        );
+        if (!ok) return;
+        // Full reset, then switch
+        generateChat.setMessages([]);
+        testChat.setMessages([]);
+        setActivePersona(null);
+        setLatestScore(null);
+        setLatestFeedback(null);
+        setEvalLog([]);
+        setRefinementCount(0);
+        setSteps([]);
+        setPersonaComplete(false);
+        stepCounterRef.current = 0;
+        processedAnnotationsRef.current = 0;
+        setOpenDrawer(null);
+      }
+      setProvider(next);
+    },
+    [provider, generateChat, testChat]
+  );
+
   const isAnyLoading = generateChat.isLoading || testChat.isLoading;
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -316,7 +345,7 @@ export function PersonaGenApp() {
         <div className="flex items-center gap-2">
           <ModelSelector
             value={provider}
-            onChange={setProvider}
+            onChange={handleProviderChange}
             disabled={isAnyLoading}
           />
 
