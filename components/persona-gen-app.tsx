@@ -371,7 +371,12 @@ export function PersonaGenApp() {
           messages={generateChat.messages}
           input={generateChat.input}
           onInputChange={generateChat.handleInputChange}
-          onSubmit={generateChat.handleSubmit}
+          onSubmit={(e) => {
+            // Always clear the completion card when the user manually submits
+            // from the textarea — the new message is a continuation, not a chip click
+            setPersonaComplete(false);
+            generateChat.handleSubmit(e);
+          }}
           isLoading={generateChat.isLoading}
           steps={steps}
           onSendMessage={handleSendMessage}
@@ -381,6 +386,7 @@ export function PersonaGenApp() {
                   score: latestScore,
                   planItems: completionPlanItems,
                   onOpenTest: openTest,
+                  onKeepRefining: () => setPersonaComplete(false),
                 }
               : undefined
           }

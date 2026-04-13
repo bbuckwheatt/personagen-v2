@@ -46,6 +46,7 @@ interface CompletionCardData {
   score: number | null;
   planItems: string[];
   onOpenTest: () => void;
+  onKeepRefining: () => void;
 }
 
 interface ChatPanelProps {
@@ -80,22 +81,34 @@ function extractDisplayText(content: string): string {
 
   try {
     const parsed = JSON.parse(stripped);
+
+    // Primary: the agent's explicit user-facing response
     if (typeof parsed?.next === "string" && parsed.next.trim()) {
       return parsed.next.trim();
     }
-    // next is empty/null — model generated a persona without a message
+
+    // next is empty/null — pick the best available fallback rather than
+    // leaving a three-dot indicator on a completed message.
     if (parsed?.["current-persona"]) {
-      return "Your persona has been generated! Click Preview to review it, or keep chatting to refine it.";
+      // A persona was generated or refined — acknowledge it
+      return "Your persona has been generated. Open Preview to review it, or keep chatting to refine it.";
+    }
+
+    if (typeof parsed?.reasoning === "string" && parsed.reasoning.trim()) {
+      // Agent is thinking through requirements but hasn't asked yet — show nothing
+      // and let the dots play until the stream finishes with a real next field
+      return "";
     }
   } catch {
-    // Partial stream — JSON not yet complete
+    // Partial stream — JSON not yet complete, show typing indicator
   }
 
-  // Hide raw JSON fragments during streaming
+  // Hide raw JSON fragments while they're accumulating during streaming
   if (content.trim().startsWith("{") || content.trim().startsWith("```")) {
     return "";
   }
 
+  // Plain text response (shouldn't normally happen with these prompts)
   return content;
 }
 
@@ -104,6 +117,7 @@ function CompletionCard({
   score,
   planItems,
   onOpenTest,
+  onKeepRefining,
   onSendQuestion,
 }: CompletionCardData & { onSendQuestion: (q: string) => void }) {
   return (
@@ -134,6 +148,15 @@ function CompletionCard({
           >
             <span>Test your persona</span>
             <span className="text-amber-600 group-hover:translate-x-0.5 transition-transform">↗</span>
+          </button>
+
+          {/* Secondary action */}
+          <button
+            onClick={onKeepRefining}
+            className="flex items-center justify-between w-full px-3 py-2 bg-white dark:bg-background border border-border rounded-md text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <span>Keep refining</span>
+            <span className="text-muted-foreground/60">↩</span>
           </button>
 
           {/* Refinement chips */}
@@ -256,6 +279,7 @@ export function ChatPanel({
           {completionCard && onSendMessage && (
             <CompletionCard
               {...completionCard}
+              onKeepRefining={completionCard.onKeepRefining}
               onSendQuestion={onSendMessage}
             />
           )}
