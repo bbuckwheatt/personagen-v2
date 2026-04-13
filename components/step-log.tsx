@@ -12,6 +12,8 @@
 
 "use client";
 
+import { useState } from "react";
+
 export type StepStatus = "running" | "done" | "error";
 
 export interface StepEntry {
@@ -35,14 +37,46 @@ const STATUS_STYLES: Record<StepStatus, string> = {
 };
 
 export function StepLog({ steps, alwaysVisible }: StepLogProps) {
+  const isRunning = steps.some((s) => s.status === "running");
+  // Auto-expand while running, collapsed by default when all done
+  const [open, setOpen] = useState(true);
+
+  // Reset to open whenever a new run starts
+  // (handled by parent clearing steps, which unmounts/remounts this component)
+
   if (steps.length === 0 && !alwaysVisible) return null;
+
+  const lastStep = steps[steps.length - 1];
+  const summary = isRunning
+    ? lastStep?.label ?? "Running..."
+    : `${steps.length} step${steps.length !== 1 ? "s" : ""} completed`;
 
   return (
     <div className="rounded-xl border border-border bg-muted/20 text-xs font-mono overflow-hidden">
-      <div className="px-3 py-1.5 border-b border-border/60 text-muted-foreground text-[10px] uppercase tracking-widest font-sans font-medium">
-        Agent Steps
-      </div>
-      <ul className="divide-y divide-border/40">
+      {/* Header — always visible, click to toggle */}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-3 py-1.5 border-b border-border/60 hover:bg-muted/40 transition-colors group"
+      >
+        <span className="text-muted-foreground text-[10px] uppercase tracking-widest font-sans font-medium">
+          Agent Steps
+        </span>
+        <span className="flex items-center gap-2">
+          {!open && (
+            <span className="text-muted-foreground/60 font-sans normal-case tracking-normal text-[10px]">
+              {summary}
+            </span>
+          )}
+          {isRunning && open && (
+            <span className="inline-block w-2.5 h-2.5 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+          )}
+          <span className={`text-muted-foreground/50 transition-transform duration-200 ${open ? "rotate-0" : "-rotate-90"}`}>
+            ▾
+          </span>
+        </span>
+      </button>
+
+      {open && <ul className="divide-y divide-border/40">
         {steps.map((step) => (
           <li
             key={step.id}
@@ -85,7 +119,7 @@ export function StepLog({ steps, alwaysVisible }: StepLogProps) {
             )}
           </li>
         ))}
-      </ul>
+      </ul>}
     </div>
   );
 }
