@@ -177,7 +177,9 @@ export function PersonaGenApp() {
   // requiring the user to type in the textarea.
   const handleSendMessage = useCallback(
     (text: string) => {
-      setPersonaComplete(false); // hide completion card while generating
+      setPersonaComplete(false);
+      setSteps([]);
+      stepCounterRef.current = 0;
       generateChat.append(
         { role: "user", content: text },
         {
@@ -372,9 +374,9 @@ export function PersonaGenApp() {
           input={generateChat.input}
           onInputChange={generateChat.handleInputChange}
           onSubmit={(e) => {
-            // Always clear the completion card when the user manually submits
-            // from the textarea — the new message is a continuation, not a chip click
             setPersonaComplete(false);
+            setSteps([]);
+            stepCounterRef.current = 0;
             generateChat.handleSubmit(e);
           }}
           isLoading={generateChat.isLoading}
