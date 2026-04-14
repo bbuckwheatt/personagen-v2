@@ -180,6 +180,7 @@ export function PersonaGenApp() {
       setPersonaComplete(false);
       setSteps([]);
       stepCounterRef.current = 0;
+      processedAnnotationsRef.current = 0;
       generateChat.append(
         { role: "user", content: text },
         {
@@ -406,6 +407,7 @@ export function PersonaGenApp() {
             setPersonaComplete(false);
             setSteps([]);
             stepCounterRef.current = 0;
+            processedAnnotationsRef.current = 0;
             generateChat.handleSubmit(e);
           }}
           isLoading={generateChat.isLoading}
